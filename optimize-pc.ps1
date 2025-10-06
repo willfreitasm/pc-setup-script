@@ -747,6 +747,48 @@ if (Test-Path $chromeUserDataPath) {
                 
                 Write-Host "   Processing profile: $profileName" -ForegroundColor Cyan
                 
+                # Create Bookmarks file if it doesn't exist
+                if (!(Test-Path $chromeBookmarksPath)) {
+                    Write-Host "      Creating new bookmarks file..." -ForegroundColor Yellow
+                    $initialBookmarks = @{
+                        checksum = ""
+                        roots = @{
+                            bookmark_bar = @{
+                                children = @()
+                                date_added = "13000000000000000"
+                                date_last_used = "0"
+                                date_modified = "0"
+                                guid = [guid]::NewGuid().ToString()
+                                id = "1"
+                                name = "Bookmarks bar"
+                                type = "folder"
+                            }
+                            other = @{
+                                children = @()
+                                date_added = "13000000000000000"
+                                date_last_used = "0"
+                                date_modified = "0"
+                                guid = [guid]::NewGuid().ToString()
+                                id = "2"
+                                name = "Other bookmarks"
+                                type = "folder"
+                            }
+                            synced = @{
+                                children = @()
+                                date_added = "13000000000000000"
+                                date_last_used = "0"
+                                date_modified = "0"
+                                guid = [guid]::NewGuid().ToString()
+                                id = "3"
+                                name = "Mobile bookmarks"
+                                type = "folder"
+                            }
+                        }
+                        version = 1
+                    }
+                    $initialBookmarks | ConvertTo-Json -Depth 100 | Set-Content $chromeBookmarksPath -Encoding UTF8
+                }
+                
                 if (Test-Path $chromeBookmarksPath) {
                     # Clear existing bookmarks
                     $bookmarksJson = Get-Content $chromeBookmarksPath -Raw | ConvertFrom-Json
@@ -798,7 +840,7 @@ if (Test-Path $chromeUserDataPath) {
                         Write-Host "      Bookmarks bar enabled" -ForegroundColor Green
                     }
                 } else {
-                    Write-Host "      No bookmarks file found - skipping" -ForegroundColor Yellow
+                    Write-Host "      Could not create bookmarks file - Chrome may need to be opened first" -ForegroundColor Yellow
                 }
             }
             
