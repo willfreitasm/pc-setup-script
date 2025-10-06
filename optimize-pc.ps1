@@ -58,15 +58,26 @@ foreach ($path in $uninstallPaths) {
     if ($apps) {
         foreach ($app in $apps) {
             $remotePCFound = $true
-            Write-Host "   Found: $($app.DisplayName)" -ForegroundColor Yellow
+            $appName = $app.DisplayName
+            Write-Host "   Found: $appName" -ForegroundColor Yellow
             
             if ($app.UninstallString) {
                 try {
                     if ($app.UninstallString -match "msiexec") {
                         $productCode = $app.UninstallString -replace ".*({[A-F0-9-]+}).*", '$1'
                         Write-Host "   Uninstalling silently..." -ForegroundColor Yellow
-                        Start-Process "msiexec.exe" -ArgumentList "/x $productCode /qn /norestart" -Wait -NoNewWindow -WindowStyle Hidden
-                        Write-Host "   RemotePC Host removed!" -ForegroundColor Green
+                        $process = Start-Process "msiexec.exe" -ArgumentList "/x $productCode /qn /norestart" -Wait -PassThru -WindowStyle Hidden
+                        
+                        # Wait a moment for uninstall to complete
+                        Start-Sleep -Seconds 2
+                        
+                        # Verify it was removed
+                        $stillExists = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $appName }
+                        if (-not $stillExists) {
+                            Write-Host "   $appName removed successfully!" -ForegroundColor Green
+                        } else {
+                            Write-Host "   $appName may still be installed (exit code: $($process.ExitCode))" -ForegroundColor Yellow
+                        }
                     } else {
                         # Handle regular uninstaller
                         $uninstallCmd = $app.UninstallString -replace '"', ''
@@ -76,11 +87,21 @@ foreach ($path in $uninstallPaths) {
                         $silentArgs = @("/S", "/SILENT", "/VERYSILENT", "/quiet", "/qn", "/norestart")
                         $argString = $silentArgs -join " "
                         
-                        Start-Process $uninstallCmd -ArgumentList $argString -Wait -NoNewWindow -WindowStyle Hidden -ErrorAction SilentlyContinue
-                        Write-Host "   RemotePC Host removed!" -ForegroundColor Green
+                        $process = Start-Process $uninstallCmd -ArgumentList $argString -Wait -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
+                        
+                        # Wait a moment for uninstall to complete
+                        Start-Sleep -Seconds 2
+                        
+                        # Verify it was removed
+                        $stillExists = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $appName }
+                        if (-not $stillExists) {
+                            Write-Host "   $appName removed successfully!" -ForegroundColor Green
+                        } else {
+                            Write-Host "   $appName may still be installed" -ForegroundColor Yellow
+                        }
                     }
                 } catch {
-                    Write-Host "   Error removing: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "   Error removing $appName : $($_.Exception.Message)" -ForegroundColor Red
                 }
             }
         }
