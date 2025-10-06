@@ -44,18 +44,45 @@ if ($pagefileset) {
 Write-Host "   Done!" -ForegroundColor Gray
 
 Write-Host "[2/13] Removing RemotePC Host..." -ForegroundColor Green
-$uninstallPaths = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
+$remotePCFound = $false
+$uninstallPaths = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+
 foreach ($path in $uninstallPaths) {
-    $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*RemotePC*" }
+    $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object { 
+        $_.DisplayName -like "*RemotePC*" -and $_.DisplayName -notlike "*RemoteDesktop*"
+    }
+    
     if ($apps) {
         foreach ($app in $apps) {
-            if ($app.UninstallString -match "msiexec") {
-                $productCode = $app.UninstallString -replace ".*({[A-F0-9-]+}).*", '$1'
-                Start-Process "msiexec.exe" -ArgumentList "/x $productCode /qn /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
-                Write-Host "   Removed!" -ForegroundColor Green
+            $remotePCFound = $true
+            Write-Host "   Found: $($app.DisplayName)" -ForegroundColor Yellow
+            
+            if ($app.UninstallString) {
+                try {
+                    if ($app.UninstallString -match "msiexec") {
+                        $productCode = $app.UninstallString -replace ".*({[A-F0-9-]+}).*", '$1'
+                        Write-Host "   Uninstalling..." -ForegroundColor Yellow
+                        Start-Process "msiexec.exe" -ArgumentList "/x $productCode /qn /norestart" -Wait -NoNewWindow
+                        Write-Host "   RemotePC Host removed!" -ForegroundColor Green
+                    } else {
+                        $uninstallCmd = $app.UninstallString -replace '"', ''
+                        Write-Host "   Uninstalling..." -ForegroundColor Yellow
+                        Start-Process $uninstallCmd -ArgumentList "/S" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                        Write-Host "   RemotePC Host removed!" -ForegroundColor Green
+                    }
+                } catch {
+                    Write-Host "   Error removing: $($_.Exception.Message)" -ForegroundColor Red
+                }
             }
         }
     }
+}
+
+if (-not $remotePCFound) {
+    Write-Host "   Not installed - skipping" -ForegroundColor Gray
 }
 
 Write-Host "[3/13] Installing AnyDesk..." -ForegroundColor Green
@@ -139,6 +166,9 @@ if ($anydeskExe -and (Test-Path $anydeskExe)) {
 }
 
 Write-Host "[4/13] Installing Sumatra PDF..." -ForegroundColor Green
+Write-Host "   SKIPPED - Install manually if needed from www.sumatrapdfreader.org" -ForegroundColor Yellow
+
+<#
 $sumatraFound = $false
 $sumatraPaths = @("$env:ProgramFiles\SumatraPDF\SumatraPDF.exe", "$env:ProgramFiles(x86)\SumatraPDF\SumatraPDF.exe")
 foreach ($path in $sumatraPaths) {
@@ -227,11 +257,21 @@ if (-not $sumatraFound) {
         Write-Host "   Download from: www.sumatrapdfreader.org" -ForegroundColor Yellow
     }
 }
+#>
 
 Write-Host "[5/13] Installing FreeOffice..." -ForegroundColor Green
-Write-Host "   Install FreeOffice? (150MB download, may be slow)" -ForegroundColor Yellow
-Write-Host "   Press Y to install, N to skip: " -NoNewline -ForegroundColor Yellow
-$installOffice = Read-Host
+Write-Host "   SKIPPED - Install manually if needed from www.softmaker.com" -ForegroundColor Yellow
+
+<#
+Write-Host ""
+Write-Host "   FreeOffice is a 150MB download and may be slow." -ForegroundColor Yellow
+Write-Host "   Do you want to install it now?" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "   Type Y and press Enter to install" -ForegroundColor White
+Write-Host "   Type N and press Enter to skip" -ForegroundColor White
+Write-Host ""
+$Host.UI.RawUI.FlushInputBuffer()
+$installOffice = $Host.UI.ReadLine()
 
 if ($installOffice -eq 'Y' -or $installOffice -eq 'y') {
     $officeFound = $false
@@ -333,6 +373,7 @@ if ($installOffice -eq 'Y' -or $installOffice -eq 'y') {
 } else {
     Write-Host "   Skipped FreeOffice installation" -ForegroundColor Gray
 }
+#>
 
 Write-Host "[6/13] Disabling visual effects..." -ForegroundColor Green
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 2 -Type DWord
@@ -428,9 +469,15 @@ foreach ($svc in $services) {
 Write-Host "   Done!" -ForegroundColor Gray
 
 Write-Host "[12/13] Optimizing taskbar..." -ForegroundColor Green
-Write-Host "   Hiding search box and task view..." -ForegroundColor Gray
+Write-Host "   Hiding search box, task view, and widgets..." -ForegroundColor Gray
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Value 0 -Type DWord
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord
+
+# Disable Widgets (Windows 11)
+if (!(Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced")) {
+    New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Force | Out-Null
+}
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value 0 -Type DWord
 
 Write-Host "   Unpinning all taskbar apps..." -ForegroundColor Gray
 $pinnedAppsPath = "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
@@ -610,19 +657,15 @@ Write-Host "WHAT CHANGED:" -ForegroundColor Yellow
 Write-Host "[+] Virtual memory optimized for $ramAmount" -ForegroundColor White
 Write-Host "[+] RemotePC Host removed (if installed)" -ForegroundColor White
 Write-Host "[+] AnyDesk installed and configured" -ForegroundColor White
-Write-Host "[+] Sumatra PDF installed as default PDF viewer" -ForegroundColor White
-if ($installOffice -eq 'Y' -or $installOffice -eq 'y') {
-    Write-Host "[+] SoftMaker FreeOffice installed with file associations" -ForegroundColor White
-} else {
-    Write-Host "[-] SoftMaker FreeOffice skipped" -ForegroundColor Gray
-}
+Write-Host "[+] Sumatra PDF - SKIPPED (code available, commented out)" -ForegroundColor Gray
+Write-Host "[+] SoftMaker FreeOffice - SKIPPED (code available, commented out)" -ForegroundColor Gray
 Write-Host "[+] Visual effects disabled" -ForegroundColor White
 Write-Host "[+] Windows Search disabled" -ForegroundColor White
 Write-Host "[+] Transparency disabled" -ForegroundColor White
 Write-Host "[+] Storage Sense enabled" -ForegroundColor White
 Write-Host "[+] Startup: Only RemoteDesktop Host & AnyDesk enabled" -ForegroundColor White
 Write-Host "[+] Unnecessary services disabled" -ForegroundColor White
-Write-Host "[+] Taskbar optimized and cleaned" -ForegroundColor White
+Write-Host "[+] Taskbar optimized (widgets disabled) and cleaned" -ForegroundColor White
 Write-Host "[+] Chrome bookmarks imported from GitHub" -ForegroundColor White
 Write-Host "[+] Chrome bookmarks bar enabled" -ForegroundColor White
 Write-Host ""
@@ -646,5 +689,9 @@ Write-Host "1. RESTART your computer for all changes to take effect" -Foreground
 Write-Host "2. After restart, verify Task Manager > Startup tab" -ForegroundColor White
 Write-Host "3. Open Chrome to see your imported bookmarks" -ForegroundColor White
 Write-Host "4. Check taskbar - should only show Chrome, File Explorer, Calculator, AnyDesk" -ForegroundColor White
+Write-Host "5. Widgets should be disabled from taskbar (Windows 11)" -ForegroundColor White
+Write-Host ""
+Write-Host "NOTE: To re-enable Sumatra PDF or FreeOffice installations," -ForegroundColor Cyan
+Write-Host "uncomment the code blocks in steps 4 and 5 (remove <# and #>)" -ForegroundColor Cyan
 Write-Host ""
 pause
