@@ -64,13 +64,19 @@ foreach ($path in $uninstallPaths) {
                 try {
                     if ($app.UninstallString -match "msiexec") {
                         $productCode = $app.UninstallString -replace ".*({[A-F0-9-]+}).*", '$1'
-                        Write-Host "   Uninstalling..." -ForegroundColor Yellow
-                        Start-Process "msiexec.exe" -ArgumentList "/x $productCode /qn /norestart" -Wait -NoNewWindow
+                        Write-Host "   Uninstalling silently..." -ForegroundColor Yellow
+                        Start-Process "msiexec.exe" -ArgumentList "/x $productCode /qn /norestart" -Wait -NoNewWindow -WindowStyle Hidden
                         Write-Host "   RemotePC Host removed!" -ForegroundColor Green
                     } else {
+                        # Handle regular uninstaller
                         $uninstallCmd = $app.UninstallString -replace '"', ''
-                        Write-Host "   Uninstalling..." -ForegroundColor Yellow
-                        Start-Process $uninstallCmd -ArgumentList "/S" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                        Write-Host "   Uninstalling silently..." -ForegroundColor Yellow
+                        
+                        # Try multiple silent flags in case one works
+                        $silentArgs = @("/S", "/SILENT", "/VERYSILENT", "/quiet", "/qn", "/norestart")
+                        $argString = $silentArgs -join " "
+                        
+                        Start-Process $uninstallCmd -ArgumentList $argString -Wait -NoNewWindow -WindowStyle Hidden -ErrorAction SilentlyContinue
                         Write-Host "   RemotePC Host removed!" -ForegroundColor Green
                     }
                 } catch {
@@ -470,14 +476,40 @@ Write-Host "   Done!" -ForegroundColor Gray
 
 Write-Host "[12/13] Optimizing taskbar..." -ForegroundColor Green
 Write-Host "   Hiding search box, task view, and widgets..." -ForegroundColor Gray
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Value 0 -Type DWord
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
-# Disable Widgets (Windows 11)
-if (!(Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced")) {
-    New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Force | Out-Null
+# Disable Widgets (Windows 11) - with proper permissions
+try {
+    $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+    
+    # Ensure the key exists
+    if (!(Test-Path $regPath)) {
+        New-Item -Path $regPath -Force -ErrorAction Stop | Out-Null
+    }
+    
+    # Get current user SID for permissions
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentUserSid = $currentUser.User
+    
+    # Get ACL and set full control
+    $acl = Get-Acl -Path $regPath
+    $rule = New-Object System.Security.AccessControl.RegistryAccessRule($currentUserSid, "FullControl", "Allow")
+    $acl.SetAccessRule($rule)
+    Set-Acl -Path $regPath -AclObject $acl -ErrorAction Stop
+    
+    # Now set the value
+    Set-ItemProperty -Path $regPath -Name "TaskbarDa" -Value 0 -Type DWord -Force -ErrorAction Stop
+    Write-Host "   Widgets disabled successfully!" -ForegroundColor Gray
+} catch {
+    # If all that fails, try using reg.exe command directly
+    try {
+        $result = reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f 2>&1
+        Write-Host "   Widgets disabled via command line!" -ForegroundColor Gray
+    } catch {
+        Write-Host "   Could not disable widgets (this is optional)" -ForegroundColor Gray
+    }
 }
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value 0 -Type DWord
 
 Write-Host "   Unpinning all taskbar apps..." -ForegroundColor Gray
 $pinnedAppsPath = "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
