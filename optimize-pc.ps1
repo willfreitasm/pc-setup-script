@@ -20,8 +20,37 @@ Write-Host "4. 16GB RAM" -ForegroundColor White
 Write-Host ""
 $ramChoice = Read-Host "Enter your choice (1-4)"
 
+$aggressiveMode = $false
+
 switch ($ramChoice) {
-    "1" { $initialSize = 6144; $maximumSize = 8192; $ramAmount = "4GB" }
+    "1" { 
+        $initialSize = 6144
+        $maximumSize = 8192
+        $ramAmount = "4GB"
+        
+        # Prompt for aggressive mode on 4GB systems
+        Write-Host ""
+        Write-Host "Your system has limited RAM (4GB)." -ForegroundColor Yellow
+        Write-Host "Would you like AGGRESSIVE service disabling for maximum performance?" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "This will disable:" -ForegroundColor White
+        Write-Host "  - Windows Update (you can re-enable when needed)" -ForegroundColor Gray
+        Write-Host "  - Print Spooler (unless you have a printer)" -ForegroundColor Gray
+        Write-Host "  - Xbox Services" -ForegroundColor Gray
+        Write-Host "  - Windows Error Reporting" -ForegroundColor Gray
+        Write-Host "  - Remote Registry" -ForegroundColor Gray
+        Write-Host "  - Fax Service" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "Type Y for Aggressive Mode, N for Standard Mode: " -ForegroundColor Cyan -NoNewline
+        $aggressiveChoice = Read-Host
+        
+        if ($aggressiveChoice -eq 'Y' -or $aggressiveChoice -eq 'y') {
+            $aggressiveMode = $true
+            Write-Host "   AGGRESSIVE MODE ENABLED - Maximum performance!" -ForegroundColor Green
+        } else {
+            Write-Host "   Standard mode selected" -ForegroundColor Gray
+        }
+    }
     "2" { $initialSize = 12288; $maximumSize = 16384; $ramAmount = "8GB" }
     "3" { $initialSize = 18432; $maximumSize = 24576; $ramAmount = "12GB" }
     "4" { $initialSize = 24576; $maximumSize = 32768; $ramAmount = "16GB" }
@@ -504,12 +533,35 @@ foreach ($folder in $folders) {
 Write-Host "   Removed $removed items" -ForegroundColor Gray
 
 Write-Host "[11/13] Disabling services..." -ForegroundColor Green
+
+# Base services (always disabled for low-spec systems)
 $services = @("SysMain", "DiagTrack", "dmwappushservice")
-foreach ($svc in $services) {
-    Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-    Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+
+# Aggressive mode services (only for 4GB systems that opted in)
+if ($aggressiveMode) {
+    Write-Host "   Using AGGRESSIVE mode - disabling additional services..." -ForegroundColor Yellow
+    $services += @(
+        "wuauserv",              # Windows Update
+        "Spooler",               # Print Spooler
+        "XblAuthManager",        # Xbox Live Auth Manager
+        "XblGameSave",           # Xbox Live Game Save
+        "XboxGipSvc",            # Xbox Accessory Management
+        "XboxNetApiSvc",         # Xbox Live Networking
+        "WerSvc",                # Windows Error Reporting
+        "RemoteRegistry",        # Remote Registry (security risk)
+        "Fax"                    # Fax service
+    )
 }
-Write-Host "   Done!" -ForegroundColor Gray
+
+foreach ($svc in $services) {
+    $service = Get-Service -Name $svc -ErrorAction SilentlyContinue
+    if ($service) {
+        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+        Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Host "   Disabled: $svc" -ForegroundColor Gray
+    }
+}
+Write-Host "   Done! ($($services.Count) services disabled)" -ForegroundColor Gray
 
 Write-Host "[12/13] Optimizing taskbar..." -ForegroundColor Green
 Write-Host "   Hiding search box, task view, and widgets..." -ForegroundColor Gray
@@ -767,6 +819,9 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "WHAT CHANGED:" -ForegroundColor Yellow
 Write-Host "[+] Virtual memory optimized for $ramAmount" -ForegroundColor White
+if ($aggressiveMode) {
+    Write-Host "[+] AGGRESSIVE MODE enabled - maximum performance!" -ForegroundColor Cyan
+}
 Write-Host "[+] RemotePC Host removed (if installed)" -ForegroundColor White
 Write-Host "[+] AnyDesk installed and configured" -ForegroundColor White
 Write-Host "[+] Sumatra PDF - SKIPPED (code available, commented out)" -ForegroundColor Gray
@@ -777,7 +832,11 @@ Write-Host "[+] Transparency disabled" -ForegroundColor White
 Write-Host "[+] Storage Sense enabled" -ForegroundColor White
 Write-Host "[+] Startup: Only RemoteDesktop Host & AnyDesk enabled" -ForegroundColor White
 Write-Host "[+] Startup: Mobile Devices disabled" -ForegroundColor White
-Write-Host "[+] Unnecessary services disabled" -ForegroundColor White
+if ($aggressiveMode) {
+    Write-Host "[+] Services: 12 services disabled (aggressive mode)" -ForegroundColor White
+} else {
+    Write-Host "[+] Services: 3 services disabled (standard mode)" -ForegroundColor White
+}
 Write-Host "[+] Taskbar optimized (search, task view, widgets all hidden)" -ForegroundColor White
 Write-Host "[+] Chrome bookmarks imported to ALL profiles" -ForegroundColor White
 Write-Host "[+] Chrome bookmarks bar enabled on ALL profiles" -ForegroundColor White
@@ -803,6 +862,16 @@ Write-Host "2. After restart, verify Task Manager > Startup tab" -ForegroundColo
 Write-Host "3. Open Chrome to see your imported bookmarks" -ForegroundColor White
 Write-Host "4. Check taskbar - should only show Chrome, File Explorer, Calculator, AnyDesk" -ForegroundColor White
 Write-Host "5. Widgets should be disabled from taskbar (Windows 11)" -ForegroundColor White
+if ($aggressiveMode) {
+    Write-Host ""
+    Write-Host "AGGRESSIVE MODE NOTES:" -ForegroundColor Cyan
+    Write-Host "- Windows Update is DISABLED. To check for updates manually:" -ForegroundColor Yellow
+    Write-Host "  Run: Set-Service -Name wuauserv -StartupType Manual" -ForegroundColor Gray
+    Write-Host "  Then: Start-Service -Name wuauserv" -ForegroundColor Gray
+    Write-Host "- Print Spooler is DISABLED. If you need to print:" -ForegroundColor Yellow
+    Write-Host "  Run: Set-Service -Name Spooler -StartupType Automatic" -ForegroundColor Gray
+    Write-Host "  Then: Start-Service -Name Spooler" -ForegroundColor Gray
+}
 Write-Host ""
 Write-Host "NOTE: To re-enable Sumatra PDF or FreeOffice installations," -ForegroundColor Cyan
 Write-Host "uncomment the code blocks in steps 4 and 5 (remove <# and #>)" -ForegroundColor Cyan
