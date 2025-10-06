@@ -624,10 +624,10 @@ Write-Host "   Done!" -ForegroundColor Gray
 
 Write-Host "[13/13] Importing Chrome bookmarks..." -ForegroundColor Green
 $bookmarksUrl = "https://raw.githubusercontent.com/willfreitasm/chrome-bookmarks/refs/heads/main/bookmarks.html"
-$chromeBookmarksPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Bookmarks"
+$chromeUserDataPath = "$env:LOCALAPPDATA\Google\Chrome\User Data"
 $tempHtmlPath = "$env:TEMP\chrome-bookmarks-import.html"
 
-if (Test-Path "$env:LOCALAPPDATA\Google\Chrome") {
+if (Test-Path $chromeUserDataPath) {
     Write-Host "   Closing Chrome..." -ForegroundColor Yellow
     Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
@@ -639,60 +639,77 @@ if (Test-Path "$env:LOCALAPPDATA\Google\Chrome") {
         $ProgressPreference = 'Continue'
         
         if (Test-Path $tempHtmlPath) {
-            Write-Host "   Clearing existing bookmarks..." -ForegroundColor Yellow
-            if (Test-Path $chromeBookmarksPath) {
-                $bookmarksJson = Get-Content $chromeBookmarksPath -Raw | ConvertFrom-Json
-                $bookmarksJson.roots.bookmark_bar.children = @()
-                $bookmarksJson.roots.other.children = @()
-                if ($bookmarksJson.roots.synced) {
-                    $bookmarksJson.roots.synced.children = @()
-                }
-                $bookmarksJson | ConvertTo-Json -Depth 100 | Set-Content $chromeBookmarksPath -Encoding UTF8
+            # Find all Chrome profiles
+            $profileFolders = Get-ChildItem -Path $chromeUserDataPath -Directory | Where-Object { 
+                $_.Name -eq "Default" -or $_.Name -like "Profile *" 
             }
             
-            Write-Host "   Importing bookmarks..." -ForegroundColor Yellow
-            $htmlContent = Get-Content $tempHtmlPath -Raw
-            $bookmarkMatches = [regex]::Matches($htmlContent, '<A HREF="([^"]+)"[^>]*>([^<]+)</A>')
+            Write-Host "   Found $($profileFolders.Count) Chrome profile(s)" -ForegroundColor Gray
             
-            if ($bookmarkMatches.Count -gt 0) {
-                $bookmarksJson = Get-Content $chromeBookmarksPath -Raw | ConvertFrom-Json
-                $newBookmarks = @()
-                $bookmarkId = [int]$bookmarksJson.roots.bookmark_bar.id + 1
+            foreach ($profileFolder in $profileFolders) {
+                $profileName = $profileFolder.Name
+                $chromeBookmarksPath = Join-Path $profileFolder.FullName "Bookmarks"
+                $chromePrefsPath = Join-Path $profileFolder.FullName "Preferences"
                 
-                foreach ($match in $bookmarkMatches) {
-                    $url = $match.Groups[1].Value
-                    $name = $match.Groups[2].Value
-                    $newBookmark = @{
-                        date_added = [string]([DateTimeOffset]::Now.ToUnixTimeSeconds()) + "000000"
-                        date_last_used = "0"
-                        guid = [guid]::NewGuid().ToString()
-                        id = [string]$bookmarkId
-                        name = $name
-                        type = "url"
-                        url = $url
+                Write-Host "   Processing profile: $profileName" -ForegroundColor Cyan
+                
+                if (Test-Path $chromeBookmarksPath) {
+                    # Clear existing bookmarks
+                    $bookmarksJson = Get-Content $chromeBookmarksPath -Raw | ConvertFrom-Json
+                    $bookmarksJson.roots.bookmark_bar.children = @()
+                    $bookmarksJson.roots.other.children = @()
+                    if ($bookmarksJson.roots.synced) {
+                        $bookmarksJson.roots.synced.children = @()
                     }
-                    $newBookmarks += $newBookmark
-                    $bookmarkId++
+                    $bookmarksJson | ConvertTo-Json -Depth 100 | Set-Content $chromeBookmarksPath -Encoding UTF8
+                    
+                    # Import new bookmarks
+                    $htmlContent = Get-Content $tempHtmlPath -Raw
+                    $bookmarkMatches = [regex]::Matches($htmlContent, '<A HREF="([^"]+)"[^>]*>([^<]+)</A>')
+                    
+                    if ($bookmarkMatches.Count -gt 0) {
+                        $bookmarksJson = Get-Content $chromeBookmarksPath -Raw | ConvertFrom-Json
+                        $newBookmarks = @()
+                        $bookmarkId = [int]$bookmarksJson.roots.bookmark_bar.id + 1
+                        
+                        foreach ($match in $bookmarkMatches) {
+                            $url = $match.Groups[1].Value
+                            $name = $match.Groups[2].Value
+                            $newBookmark = @{
+                                date_added = [string]([DateTimeOffset]::Now.ToUnixTimeSeconds()) + "000000"
+                                date_last_used = "0"
+                                guid = [guid]::NewGuid().ToString()
+                                id = [string]$bookmarkId
+                                name = $name
+                                type = "url"
+                                url = $url
+                            }
+                            $newBookmarks += $newBookmark
+                            $bookmarkId++
+                        }
+                        
+                        $bookmarksJson.roots.bookmark_bar.children = $newBookmarks
+                        $bookmarksJson | ConvertTo-Json -Depth 100 | Set-Content $chromeBookmarksPath -Encoding UTF8
+                        Write-Host "      Imported $($bookmarkMatches.Count) bookmarks" -ForegroundColor Green
+                    }
+                    
+                    # Enable bookmarks bar
+                    if (Test-Path $chromePrefsPath) {
+                        $prefs = Get-Content $chromePrefsPath -Raw | ConvertFrom-Json
+                        if (-not $prefs.bookmark_bar) {
+                            $prefs | Add-Member -NotePropertyName "bookmark_bar" -NotePropertyValue @{} -Force
+                        }
+                        $prefs.bookmark_bar | Add-Member -NotePropertyName "show_on_all_tabs" -NotePropertyValue $true -Force
+                        $prefs | ConvertTo-Json -Depth 100 -Compress | Set-Content $chromePrefsPath -Encoding UTF8
+                        Write-Host "      Bookmarks bar enabled" -ForegroundColor Green
+                    }
+                } else {
+                    Write-Host "      No bookmarks file found - skipping" -ForegroundColor Yellow
                 }
-                
-                $bookmarksJson.roots.bookmark_bar.children = $newBookmarks
-                $bookmarksJson | ConvertTo-Json -Depth 100 | Set-Content $chromeBookmarksPath -Encoding UTF8
-                Write-Host "   Imported $($bookmarkMatches.Count) bookmarks!" -ForegroundColor Green
-            }
-            
-            Write-Host "   Enabling bookmarks bar..." -ForegroundColor Yellow
-            $chromePrefsPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Preferences"
-            if (Test-Path $chromePrefsPath) {
-                $prefs = Get-Content $chromePrefsPath -Raw | ConvertFrom-Json
-                if (-not $prefs.bookmark_bar) {
-                    $prefs | Add-Member -NotePropertyName "bookmark_bar" -NotePropertyValue @{} -Force
-                }
-                $prefs.bookmark_bar | Add-Member -NotePropertyName "show_on_all_tabs" -NotePropertyValue $true -Force
-                $prefs | ConvertTo-Json -Depth 100 -Compress | Set-Content $chromePrefsPath -Encoding UTF8
-                Write-Host "   Bookmarks bar enabled!" -ForegroundColor Green
             }
             
             Remove-Item $tempHtmlPath -Force -ErrorAction SilentlyContinue
+            Write-Host "   All profiles updated!" -ForegroundColor Green
         }
     } catch {
         Write-Host "   Error: $($_.Exception.Message)" -ForegroundColor Red
