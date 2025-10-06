@@ -425,6 +425,7 @@ Write-Host "   Done!" -ForegroundColor Gray
 Write-Host "[10/13] Configuring startup programs..." -ForegroundColor Green
 $keepNames = @("RemoteDesktop", "AnyDesk", "RemoteDesktopUIU")
 $keepPaths = @("RemoteDesktop Host", "AnyDesk")
+$forceRemoveNames = @("Mobile Devices", "MobileDevices", "Windows Mobile Device Center")
 $regPaths = @("HKCU:\Software\Microsoft\Windows\CurrentVersion\Run", "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run")
 $removed = 0
 
@@ -437,29 +438,44 @@ foreach ($regPath in $regPaths) {
                 $name = $prop.Name
                 $value = $prop.Value
                 $keep = $false
+                $forceRemove = $false
                 
-                foreach ($keepName in $keepNames) {
-                    if ($name -like "*$keepName*") {
-                        $keep = $true
-                        Write-Host "   KEEP: $name" -ForegroundColor Green
+                # Check if this should be force removed
+                foreach ($removeName in $forceRemoveNames) {
+                    if ($name -like "*$removeName*") {
+                        $forceRemove = $true
+                        Write-Host "   REMOVE: $name (Mobile Devices)" -ForegroundColor Red
+                        Remove-ItemProperty -Path $regPath -Name $name -ErrorAction SilentlyContinue
+                        $removed++
                         break
                     }
                 }
                 
-                if (-not $keep) {
-                    foreach ($keepPath in $keepPaths) {
-                        if ($value -like "*$keepPath*") {
+                if (-not $forceRemove) {
+                    # Check if this should be kept
+                    foreach ($keepName in $keepNames) {
+                        if ($name -like "*$keepName*") {
                             $keep = $true
                             Write-Host "   KEEP: $name" -ForegroundColor Green
                             break
                         }
                     }
-                }
-                
-                if (-not $keep) {
-                    Remove-ItemProperty -Path $regPath -Name $name -ErrorAction SilentlyContinue
-                    Write-Host "   REMOVE: $name" -ForegroundColor Red
-                    $removed++
+                    
+                    if (-not $keep) {
+                        foreach ($keepPath in $keepPaths) {
+                            if ($value -like "*$keepPath*") {
+                                $keep = $true
+                                Write-Host "   KEEP: $name" -ForegroundColor Green
+                                break
+                            }
+                        }
+                    }
+                    
+                    if (-not $keep) {
+                        Remove-ItemProperty -Path $regPath -Name $name -ErrorAction SilentlyContinue
+                        Write-Host "   REMOVE: $name" -ForegroundColor Red
+                        $removed++
+                    }
                 }
             }
         }
@@ -497,39 +513,65 @@ Write-Host "   Done!" -ForegroundColor Gray
 
 Write-Host "[12/13] Optimizing taskbar..." -ForegroundColor Green
 Write-Host "   Hiding search box, task view, and widgets..." -ForegroundColor Gray
+
+# Hide search box
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+
+# Hide task view button
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
-# Disable Widgets (Windows 11) - with proper permissions
+# Disable Widgets (Windows 11) - Multiple methods
+$widgetsDisabled = $false
+
+# Method 1: TaskbarDa registry key
 try {
     $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
     
-    # Ensure the key exists
     if (!(Test-Path $regPath)) {
         New-Item -Path $regPath -Force -ErrorAction Stop | Out-Null
     }
     
-    # Get current user SID for permissions
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $currentUserSid = $currentUser.User
-    
-    # Get ACL and set full control
-    $acl = Get-Acl -Path $regPath
-    $rule = New-Object System.Security.AccessControl.RegistryAccessRule($currentUserSid, "FullControl", "Allow")
-    $acl.SetAccessRule($rule)
-    Set-Acl -Path $regPath -AclObject $acl -ErrorAction Stop
-    
-    # Now set the value
     Set-ItemProperty -Path $regPath -Name "TaskbarDa" -Value 0 -Type DWord -Force -ErrorAction Stop
-    Write-Host "   Widgets disabled successfully!" -ForegroundColor Gray
+    $widgetsDisabled = $true
+    Write-Host "   Widgets disabled (Method 1)" -ForegroundColor Gray
 } catch {
-    # If all that fails, try using reg.exe command directly
+    Write-Host "   Method 1 failed, trying alternative..." -ForegroundColor Gray
+}
+
+# Method 2: Using reg.exe command directly
+if (-not $widgetsDisabled) {
     try {
-        $result = reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f 2>&1
-        Write-Host "   Widgets disabled via command line!" -ForegroundColor Gray
+        $null = reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f 2>&1
+        $widgetsDisabled = $true
+        Write-Host "   Widgets disabled (Method 2)" -ForegroundColor Gray
     } catch {
-        Write-Host "   Could not disable widgets (this is optional)" -ForegroundColor Gray
+        Write-Host "   Method 2 failed, trying alternative..." -ForegroundColor Gray
     }
+}
+
+# Method 3: Group Policy approach
+if (-not $widgetsDisabled) {
+    try {
+        $policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Dsh"
+        if (!(Test-Path $policyPath)) {
+            New-Item -Path $policyPath -Force -ErrorAction Stop | Out-Null
+        }
+        Set-ItemProperty -Path $policyPath -Name "AllowNewsAndInterests" -Value 0 -Type DWord -Force -ErrorAction Stop
+        $widgetsDisabled = $true
+        Write-Host "   Widgets disabled (Method 3 - Policy)" -ForegroundColor Gray
+    } catch {
+        Write-Host "   Could not disable widgets (may need manual intervention)" -ForegroundColor Yellow
+    }
+}
+
+# Verify widgets are disabled
+try {
+    $checkValue = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -ErrorAction SilentlyContinue
+    if ($checkValue.TaskbarDa -eq 0) {
+        Write-Host "   Widgets confirmed disabled!" -ForegroundColor Green
+    }
+} catch {
+    # Silent fail on verification
 }
 
 Write-Host "   Unpinning all taskbar apps..." -ForegroundColor Gray
@@ -734,10 +776,11 @@ Write-Host "[+] Windows Search disabled" -ForegroundColor White
 Write-Host "[+] Transparency disabled" -ForegroundColor White
 Write-Host "[+] Storage Sense enabled" -ForegroundColor White
 Write-Host "[+] Startup: Only RemoteDesktop Host & AnyDesk enabled" -ForegroundColor White
+Write-Host "[+] Startup: Mobile Devices disabled" -ForegroundColor White
 Write-Host "[+] Unnecessary services disabled" -ForegroundColor White
-Write-Host "[+] Taskbar optimized (widgets disabled) and cleaned" -ForegroundColor White
-Write-Host "[+] Chrome bookmarks imported from GitHub" -ForegroundColor White
-Write-Host "[+] Chrome bookmarks bar enabled" -ForegroundColor White
+Write-Host "[+] Taskbar optimized (search, task view, widgets all hidden)" -ForegroundColor White
+Write-Host "[+] Chrome bookmarks imported to ALL profiles" -ForegroundColor White
+Write-Host "[+] Chrome bookmarks bar enabled on ALL profiles" -ForegroundColor White
 Write-Host ""
 if ($global:anydeskID) {
     Write-Host "========================================" -ForegroundColor Cyan
