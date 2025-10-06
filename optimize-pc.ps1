@@ -52,7 +52,7 @@ foreach ($path in $uninstallPaths) {
             if ($app.UninstallString -match "msiexec") {
                 $productCode = $app.UninstallString -replace ".*({[A-F0-9-]+}).*", '$1'
                 Start-Process "msiexec.exe" -ArgumentList "/x $productCode /qn /norestart" -Wait -NoNewWindow -ErrorAction SilentlyContinue
-                Write-Host "   Removed RemotePC Host" -ForegroundColor Green
+                Write-Host "   Removed!" -ForegroundColor Green
             }
         }
     }
@@ -73,19 +73,22 @@ if (-not $anydeskExe) {
     try {
         $anydeskUrl = "https://download.anydesk.com/AnyDesk.exe"
         $anydeskPath = "$env:TEMP\AnyDesk.exe"
-        Write-Host "   Downloading..." -ForegroundColor Yellow
+        Write-Host "   Downloading AnyDesk (~5MB)..." -ForegroundColor Yellow
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $anydeskUrl -OutFile $anydeskPath
         $ProgressPreference = 'Continue'
         if (Test-Path $anydeskPath) {
+            $fileSize = (Get-Item $anydeskPath).Length / 1MB
+            Write-Host "   Downloaded! ($([math]::Round($fileSize, 1)) MB)" -ForegroundColor Gray
+            Write-Host "   Installing AnyDesk..." -ForegroundColor Yellow
             Start-Process -FilePath $anydeskPath -ArgumentList "--install `"$env:ProgramFiles(x86)\AnyDesk`" --start-with-win --silent" -Wait -NoNewWindow
             Start-Sleep -Seconds 3
             $anydeskExe = "$env:ProgramFiles(x86)\AnyDesk\AnyDesk.exe"
             Remove-Item $anydeskPath -Force -ErrorAction SilentlyContinue
-            Write-Host "   Installed!" -ForegroundColor Green
+            Write-Host "   AnyDesk installed successfully!" -ForegroundColor Green
         }
     } catch {
-        Write-Host "   Install failed" -ForegroundColor Yellow
+        Write-Host "   Installation failed" -ForegroundColor Yellow
     }
 }
 if ($anydeskExe -and (Test-Path $anydeskExe)) {
@@ -106,25 +109,78 @@ foreach ($path in $sumatraPaths) {
     }
 }
 if (-not $sumatraFound) {
-    try {
-        $sumatraUrl = "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64-install.exe"
-        $sumatraPath = "$env:TEMP\SumatraPDF.exe"
-        Write-Host "   Downloading..." -ForegroundColor Yellow
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $sumatraUrl -OutFile $sumatraPath
-        $ProgressPreference = 'Continue'
-        if (Test-Path $sumatraPath) {
-            Start-Process -FilePath $sumatraPath -ArgumentList "-s -d `"$env:ProgramFiles\SumatraPDF`"" -Wait -NoNewWindow
-            Start-Sleep -Seconds 2
-            $sumatraExe = "$env:ProgramFiles\SumatraPDF\SumatraPDF.exe"
-            if (Test-Path $sumatraExe) {
-                & "$sumatraExe" -register-for-pdf
-                Write-Host "   Installed!" -ForegroundColor Green
+    $sumatraUrl = "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64-install.exe"
+    $sumatraPath = "$env:TEMP\SumatraPDF-setup.exe"
+    $sumatraInstalled = $false
+    
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        Write-Host "   Download attempt $attempt..." -ForegroundColor Yellow
+        
+        try {
+            # Remove any previous failed download
+            if (Test-Path $sumatraPath) {
+                Remove-Item $sumatraPath -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 1
             }
+            
+            # Download with timeout
+            $ProgressPreference = 'SilentlyContinue'
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($sumatraUrl, $sumatraPath)
+            $ProgressPreference = 'Continue'
+            
+            # Verify download succeeded and file size is reasonable
+            if (Test-Path $sumatraPath) {
+                $fileSize = (Get-Item $sumatraPath).Length / 1MB
+                Write-Host "   Downloaded: $([math]::Round($fileSize, 2)) MB" -ForegroundColor Gray
+                
+                # Sumatra installer should be around 5-10MB
+                if ($fileSize -gt 3 -and $fileSize -lt 15) {
+                    Write-Host "   Installing..." -ForegroundColor Yellow
+                    
+                    # Run installer
+                    $process = Start-Process -FilePath $sumatraPath -ArgumentList "-s -d `"$env:ProgramFiles\SumatraPDF`"" -Wait -PassThru -NoNewWindow
+                    Start-Sleep -Seconds 3
+                    
+                    # Verify installation
+                    $sumatraExe = "$env:ProgramFiles\SumatraPDF\SumatraPDF.exe"
+                    if (Test-Path $sumatraExe) {
+                        & "$sumatraExe" -register-for-pdf -silent 2>$null
+                        Write-Host "   Installed successfully!" -ForegroundColor Green
+                        $sumatraInstalled = $true
+                        break
+                    } else {
+                        Write-Host "   Installation failed - retrying..." -ForegroundColor Yellow
+                    }
+                } else {
+                    Write-Host "   File size wrong ($([math]::Round($fileSize, 2)) MB) - corrupted download" -ForegroundColor Yellow
+                    Write-Host "   Retrying..." -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "   Download failed - retrying..." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "   Error: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+        
+        # Cleanup failed attempt
+        if (Test-Path $sumatraPath) {
             Remove-Item $sumatraPath -Force -ErrorAction SilentlyContinue
         }
-    } catch {
-        Write-Host "   Install failed" -ForegroundColor Yellow
+        
+        if ($attempt -lt 2) {
+            Start-Sleep -Seconds 3
+        }
+    }
+    
+    if (-not $sumatraInstalled) {
+        Write-Host "   Could not install - skipping Sumatra PDF" -ForegroundColor Red
+        Write-Host "   You can install manually later from sumatrapdfreader.org" -ForegroundColor Yellow
+    }
+    
+    # Final cleanup
+    if (Test-Path $sumatraPath) {
+        Remove-Item $sumatraPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -142,18 +198,53 @@ if (-not $officeFound) {
     try {
         $officeUrl = "https://www.softmaker.net/down/freeoffice2024.msi"
         $officePath = "$env:TEMP\FreeOffice.msi"
-        Write-Host "   Downloading (150MB, 2-5 min)..." -ForegroundColor Yellow
+        Write-Host "   Downloading FreeOffice (150MB, this may take 2-5 minutes)..." -ForegroundColor Yellow
+        
+        # Setup WebClient with progress events
         $webClient = New-Object System.Net.WebClient
-        $webClient.DownloadFile($officeUrl, $officePath)
+        
+        # Progress bar event
+        Register-ObjectEvent -InputObject $webClient -EventName DownloadProgressChanged -SourceIdentifier WebClient.DownloadProgressChanged -Action {
+            $percent = $EventArgs.ProgressPercentage
+            $receivedMB = [math]::Round($EventArgs.BytesReceived / 1MB, 1)
+            $totalMB = [math]::Round($EventArgs.TotalBytesToReceive / 1MB, 1)
+            Write-Progress -Activity "Downloading FreeOffice" -Status "$receivedMB MB / $totalMB MB" -PercentComplete $percent
+        } | Out-Null
+        
+        # Completion event
+        Register-ObjectEvent -InputObject $webClient -EventName DownloadFileCompleted -SourceIdentifier WebClient.DownloadFileCompleted -Action {
+            Write-Progress -Activity "Downloading FreeOffice" -Completed
+        } | Out-Null
+        
+        # Start download
+        $webClient.DownloadFileAsync([System.Uri]::new($officeUrl), $officePath)
+        
+        # Wait for download to complete
+        while ($webClient.IsBusy) {
+            Start-Sleep -Milliseconds 100
+        }
+        
+        # Cleanup events
+        Unregister-Event -SourceIdentifier WebClient.DownloadProgressChanged -ErrorAction SilentlyContinue
+        Unregister-Event -SourceIdentifier WebClient.DownloadFileCompleted -ErrorAction SilentlyContinue
+        Remove-Job -Name WebClient.* -ErrorAction SilentlyContinue
+        
         if (Test-Path $officePath) {
-            Write-Host "   Installing..." -ForegroundColor Yellow
+            $fileSize = (Get-Item $officePath).Length / 1MB
+            Write-Host "   Download complete! ($([math]::Round($fileSize, 1)) MB)" -ForegroundColor Gray
+            Write-Host "   Installing FreeOffice (this will take 1-2 minutes)..." -ForegroundColor Yellow
             Start-Process "msiexec.exe" -ArgumentList "/i `"$officePath`" /qn /norestart" -Wait -NoNewWindow
             Start-Sleep -Seconds 3
-            Write-Host "   Installed!" -ForegroundColor Green
+            Write-Host "   FreeOffice installed successfully!" -ForegroundColor Green
             Remove-Item $officePath -Force -ErrorAction SilentlyContinue
+        } else {
+            Write-Host "   Error: Download failed" -ForegroundColor Red
         }
     } catch {
-        Write-Host "   Install failed" -ForegroundColor Yellow
+        Write-Host "   Error installing FreeOffice: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "   Continuing with other steps..." -ForegroundColor Gray
+        Unregister-Event -SourceIdentifier WebClient.* -ErrorAction SilentlyContinue
+        Remove-Job -Name WebClient.* -ErrorAction SilentlyContinue
     }
 }
 
@@ -255,7 +346,7 @@ Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" 
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord
 Write-Host "   Done!" -ForegroundColor Gray
 
-Write-Host "[13/13] Importing Chrome bookmarks from GitHub..." -ForegroundColor Green
+Write-Host "[13/13] Importing Chrome bookmarks..." -ForegroundColor Green
 $bookmarksUrl = "https://raw.githubusercontent.com/willfreitasm/chrome-bookmarks/refs/heads/main/bookmarks.html"
 $chromeBookmarksPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Bookmarks"
 $tempHtmlPath = "$env:TEMP\chrome-bookmarks-import.html"
@@ -265,53 +356,36 @@ if (Test-Path "$env:LOCALAPPDATA\Google\Chrome") {
     Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     
-    Write-Host "   Downloading bookmarks from GitHub..." -ForegroundColor Yellow
+    Write-Host "   Downloading bookmarks..." -ForegroundColor Yellow
     try {
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $bookmarksUrl -OutFile $tempHtmlPath
         $ProgressPreference = 'Continue'
         
         if (Test-Path $tempHtmlPath) {
-            Write-Host "   Downloaded successfully!" -ForegroundColor Gray
-            
-            Write-Host "   Clearing existing Chrome bookmarks..." -ForegroundColor Yellow
+            Write-Host "   Clearing existing bookmarks..." -ForegroundColor Yellow
             if (Test-Path $chromeBookmarksPath) {
                 $bookmarksJson = Get-Content $chromeBookmarksPath -Raw | ConvertFrom-Json
-                
-                # Clear bookmark bar
                 $bookmarksJson.roots.bookmark_bar.children = @()
-                # Clear other bookmarks
                 $bookmarksJson.roots.other.children = @()
-                # Clear synced bookmarks if exists
                 if ($bookmarksJson.roots.synced) {
                     $bookmarksJson.roots.synced.children = @()
                 }
-                
-                # Save cleared bookmarks
                 $bookmarksJson | ConvertTo-Json -Depth 100 | Set-Content $chromeBookmarksPath -Encoding UTF8
-                Write-Host "   Existing bookmarks cleared!" -ForegroundColor Gray
             }
             
-            Write-Host "   Parsing HTML bookmarks..." -ForegroundColor Yellow
+            Write-Host "   Importing bookmarks..." -ForegroundColor Yellow
             $htmlContent = Get-Content $tempHtmlPath -Raw
-            
-            # Parse bookmarks from HTML
             $bookmarkMatches = [regex]::Matches($htmlContent, '<A HREF="([^"]+)"[^>]*>([^<]+)</A>')
             
             if ($bookmarkMatches.Count -gt 0) {
-                Write-Host "   Found $($bookmarkMatches.Count) bookmarks" -ForegroundColor Gray
-                
-                # Reload the bookmarks JSON
                 $bookmarksJson = Get-Content $chromeBookmarksPath -Raw | ConvertFrom-Json
-                
-                # Create new bookmarks array
                 $newBookmarks = @()
                 $bookmarkId = [int]$bookmarksJson.roots.bookmark_bar.id + 1
                 
                 foreach ($match in $bookmarkMatches) {
                     $url = $match.Groups[1].Value
                     $name = $match.Groups[2].Value
-                    
                     $newBookmark = @{
                         date_added = [string]([DateTimeOffset]::Now.ToUnixTimeSeconds()) + "000000"
                         date_last_used = "0"
@@ -321,55 +395,34 @@ if (Test-Path "$env:LOCALAPPDATA\Google\Chrome") {
                         type = "url"
                         url = $url
                     }
-                    
                     $newBookmarks += $newBookmark
                     $bookmarkId++
                 }
                 
-                # Add to bookmark bar
                 $bookmarksJson.roots.bookmark_bar.children = $newBookmarks
-                
-                # Save updated bookmarks
                 $bookmarksJson | ConvertTo-Json -Depth 100 | Set-Content $chromeBookmarksPath -Encoding UTF8
-                
-                Write-Host "   Bookmarks imported successfully!" -ForegroundColor Green
-                Write-Host "   $($bookmarkMatches.Count) bookmarks added to bookmark bar" -ForegroundColor Cyan
-            } else {
-                Write-Host "   Warning: No bookmarks found in HTML file" -ForegroundColor Yellow
+                Write-Host "   Imported $($bookmarkMatches.Count) bookmarks!" -ForegroundColor Green
+            }
+            
+            Write-Host "   Enabling bookmarks bar..." -ForegroundColor Yellow
+            $chromePrefsPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Preferences"
+            if (Test-Path $chromePrefsPath) {
+                $prefs = Get-Content $chromePrefsPath -Raw | ConvertFrom-Json
+                if (-not $prefs.bookmark_bar) {
+                    $prefs | Add-Member -NotePropertyName "bookmark_bar" -NotePropertyValue @{} -Force
+                }
+                $prefs.bookmark_bar | Add-Member -NotePropertyName "show_on_all_tabs" -NotePropertyValue $true -Force
+                $prefs | ConvertTo-Json -Depth 100 -Compress | Set-Content $chromePrefsPath -Encoding UTF8
+                Write-Host "   Bookmarks bar enabled!" -ForegroundColor Green
             }
             
             Remove-Item $tempHtmlPath -Force -ErrorAction SilentlyContinue
-        } else {
-            Write-Host "   Error: Could not download bookmarks file" -ForegroundColor Red
         }
     } catch {
-        Write-Host "   Error importing bookmarks: $($_.Exception.Message)" -ForegroundColor Red
-    }
-    
-    Write-Host "   Enabling bookmarks bar visibility..." -ForegroundColor Yellow
-    $chromePrefsPath = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Preferences"
-    if (Test-Path $chromePrefsPath) {
-        try {
-            $prefs = Get-Content $chromePrefsPath -Raw | ConvertFrom-Json
-            
-            # Ensure bookmark_bar object exists
-            if (-not $prefs.bookmark_bar) {
-                $prefs | Add-Member -NotePropertyName "bookmark_bar" -NotePropertyValue @{} -Force
-            }
-            
-            # Set bookmarks bar to always show
-            $prefs.bookmark_bar | Add-Member -NotePropertyName "show_on_all_tabs" -NotePropertyValue $true -Force
-            
-            # Save preferences
-            $prefs | ConvertTo-Json -Depth 100 -Compress | Set-Content $chromePrefsPath -Encoding UTF8
-            
-            Write-Host "   Bookmarks bar enabled!" -ForegroundColor Green
-        } catch {
-            Write-Host "   Warning: Could not enable bookmarks bar visibility" -ForegroundColor Yellow
-        }
+        Write-Host "   Error: $($_.Exception.Message)" -ForegroundColor Red
     }
 } else {
-    Write-Host "   Chrome not found - skipping bookmark import" -ForegroundColor Yellow
+    Write-Host "   Chrome not found - skipping" -ForegroundColor Yellow
 }
 
 Write-Host ""
@@ -377,20 +430,10 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Optimization Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "WHAT CHANGED:" -ForegroundColor Yellow
-Write-Host "[+] Virtual memory: $ramAmount" -ForegroundColor White
-Write-Host "[+] RemotePC Host: Removed" -ForegroundColor White
-Write-Host "[+] AnyDesk: Installed" -ForegroundColor White
-Write-Host "[+] Sumatra PDF: Installed" -ForegroundColor White
-Write-Host "[+] FreeOffice: Installed" -ForegroundColor White
-Write-Host "[+] Chrome bookmarks: Imported from GitHub" -ForegroundColor White
-Write-Host "[+] Startup: Only RemoteDesktop Host & AnyDesk" -ForegroundColor White
-Write-Host "[+] All optimizations applied" -ForegroundColor White
-Write-Host ""
 Write-Host "RESTART your computer now!" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "After restart:" -ForegroundColor White
-Write-Host "- Verify Task Manager > Startup tab" -ForegroundColor White
-Write-Host "- Open Chrome to see your imported bookmarks" -ForegroundColor White
+Write-Host "- Open Task Manager > Startup to verify" -ForegroundColor White
+Write-Host "- Open Chrome to see your bookmarks" -ForegroundColor White
 Write-Host ""
 pause
