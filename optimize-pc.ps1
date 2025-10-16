@@ -978,87 +978,28 @@ if (Test-Path $chromeUserDataPath) {
 }
 
 
-Write-Host "[17/17] Installing OctoBrowser..." -ForegroundColor Green
+Write-Host "[17/17] Downloading OctoBrowser to Desktop..." -ForegroundColor Green
 
-$octoBrowserExe = "$env:USERPROFILE\AppData\Local\Programs\Octo Browser\Octo Browser.exe"
-
-# Check if already installed
-if (Test-Path $octoBrowserExe) {
-    Write-Host "   Already installed" -ForegroundColor Gray
-} else {
-    try {
-        $octoBrowserUrl = "https://binaries.octobrowser.net/releases/installer/Octo_Browser_latest_win.exe"
-        $desktopPath = [Environment]::GetFolderPath("Desktop")
-        $octoBrowserInstaller = Join-Path $desktopPath "Octo_Browser_latest_win.exe"
-        
-        Write-Host "   Downloading OctoBrowser (~120MB)..." -ForegroundColor Yellow
-        
-        # Download with progress
-        $webClient = New-Object System.Net.WebClient
-        
-        # Progress event
-        Register-ObjectEvent -InputObject $webClient -EventName DownloadProgressChanged -SourceIdentifier OctoBrowser.DownloadProgress -Action {
-            $percent = $EventArgs.ProgressPercentage
-            $receivedMB = [math]::Round($EventArgs.BytesReceived / 1MB, 1)
-            $totalMB = [math]::Round($EventArgs.TotalBytesToReceive / 1MB, 1)
-            Write-Progress -Activity "Downloading OctoBrowser" -Status "$receivedMB MB / $totalMB MB" -PercentComplete $percent
-        } | Out-Null
-        
-        # Completion event
-        Register-ObjectEvent -InputObject $webClient -EventName DownloadFileCompleted -SourceIdentifier OctoBrowser.DownloadComplete -Action {
-            Write-Progress -Activity "Downloading OctoBrowser" -Completed
-        } | Out-Null
-        
-        # Start download
-        $webClient.DownloadFileAsync([System.Uri]::new($octoBrowserUrl), $octoBrowserInstaller)
-        
-        # Wait for download
-        while ($webClient.IsBusy) {
-            Start-Sleep -Milliseconds 100
-        }
-        
-        # Cleanup events
-        Unregister-Event -SourceIdentifier OctoBrowser.DownloadProgress -ErrorAction SilentlyContinue
-        Unregister-Event -SourceIdentifier OctoBrowser.DownloadComplete -ErrorAction SilentlyContinue
-        Remove-Job -Name OctoBrowser.* -ErrorAction SilentlyContinue
-        
-        if (Test-Path $octoBrowserInstaller) {
-            $fileSize = (Get-Item $octoBrowserInstaller).Length / 1MB
-            Write-Host "   Downloaded to Desktop! ($([math]::Round($fileSize, 1)) MB)" -ForegroundColor Gray
-            
-            Write-Host "   Installing OctoBrowser..." -ForegroundColor Yellow
-            
-            # Try silent installation
-            # Most NSIS installers use /S for silent install
-            $process = Start-Process -FilePath $octoBrowserInstaller -ArgumentList "/S" -Wait -PassThru -NoNewWindow
-            
-            Start-Sleep -Seconds 5
-            
-            # Check if installed
-            if (Test-Path $octoBrowserExe) {
-                Write-Host "   OctoBrowser installed successfully!" -ForegroundColor Green
-                
-                # Keep installer on desktop for user
-                Write-Host "   Installer kept on Desktop for future use" -ForegroundColor Cyan
-            } else {
-                Write-Host "   Silent install may not have worked" -ForegroundColor Yellow
-                Write-Host "   Installer saved to Desktop - run it manually" -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host "   Download failed" -ForegroundColor Red
-        }
-        
-    } catch {
-        Write-Host "   Error: $($_.Exception.Message)" -ForegroundColor Red
-        Unregister-Event -SourceIdentifier OctoBrowser.* -ErrorAction SilentlyContinue
-        Remove-Job -Name OctoBrowser.* -ErrorAction SilentlyContinue
+try {
+    $octoBrowserUrl = "https://binaries.octobrowser.net/releases/installer/Octo_Browser_latest_win.exe"
+    $desktopPath = [Environment]::GetFolderPath("Desktop")
+    $octoBrowserPath = Join-Path $desktopPath "Octo_Browser_latest_win.exe"
+    
+    Write-Host "   Downloading OctoBrowser installer..." -ForegroundColor Yellow
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $octoBrowserUrl -OutFile $octoBrowserPath
+    $ProgressPreference = 'Continue'
+    
+    if (Test-Path $octoBrowserPath) {
+        $fileSize = (Get-Item $octoBrowserPath).Length / 1MB
+        Write-Host "   Downloaded to Desktop! ($([math]::Round($fileSize, 1)) MB)" -ForegroundColor Green
+        Write-Host "   File: Octo_Browser_latest_win.exe" -ForegroundColor Cyan
+    } else {
+        Write-Host "   Download failed" -ForegroundColor Red
     }
+} catch {
+    Write-Host "   Error downloading OctoBrowser: $($_.Exception.Message)" -ForegroundColor Red
 }
-
-
-
-
-
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
@@ -1093,7 +1034,7 @@ Write-Host ""
 Write-Host "TOTAL EXPECTED RAM SAVINGS: 300-550 MB!" -ForegroundColor Cyan
 Write-Host "[+] Chrome bookmarks imported to ALL profiles" -ForegroundColor White
 Write-Host "[+] Chrome bookmarks bar enabled on ALL profiles" -ForegroundColor White
-Write-Host "[+] OctoBrowser: Downloaded & installed" -ForegroundColor White
+Write-Host "[+] OctoBrowser: Downloaded to Desktop (ready to install)" -ForegroundColor White
 Write-Host ""
 if ($global:anydeskID) {
     Write-Host "========================================" -ForegroundColor Cyan
